@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -42,6 +45,7 @@ func printmap(m map[string]int) {
 
 func reverse(n int) int {
 	rev := 0
+	fmt.Printf("rev %v n %v", rev, n)
 	for n != 0 {
 		rev = rev*10 + n%10
 		fmt.Println()
@@ -66,6 +70,70 @@ func printcar(c car) {
 	fmt.Println("brancd :", c.brand)
 	fmt.Println("model :", c.model)
 	fmt.Println("year :", c.Year)
+}
+
+func retry(ctx context.Context, retryable func(error) bool, operation func(context.Context) error) error {
+	const MaxAttempts = 3
+	delay := 2 * time.Second
+
+	for i := 0; i < MaxAttempts; i++ {
+		err := operation(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if !retryable(err) {
+			return err
+		}
+
+		if i == MaxAttempts-1 {
+			return err
+		}
+
+		wait := time.Duration(rand.Int63n(int64(delay)))
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		delay *= 2
+	}
+	return nil
+}
+
+var errTemporary = errors.New("temporary error")
+
+func retry_example() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	attempt := 0
+	result := 0
+
+	// memaksa reverse function untuk retrun error sementara pada 2 percobaan pertama, dan berhasil pada percobaan ke-3
+	// operation: wrap reverse() so it matches func(context.Context) error
+	operation := func(ctx context.Context) error {
+		attempt++
+		fmt.Println("\nattempt", attempt)
+		if attempt < 3 { // simulate failure on first 2 attempts
+			return errTemporary
+		}
+		result = reverse(4321)
+		return nil
+	}
+
+	// only retry temporary error
+	retryable := func(err error) bool {
+		return errors.Is(err, errTemporary)
+	}
+
+	if err := retry(ctx, retryable, operation); err != nil {
+		fmt.Println("\nretry failed:", err)
+		return
+	}
+	fmt.Println("\nretry success, reverse result:", result)
 }
 
 func getCar(c *car) car {
@@ -181,9 +249,11 @@ func main() {
 	//struct_example()
 	//constants()
 	fmt.Println("reverse of 4321 is", reverse(4321))
+	retry_example()
 	fmt.Println(checkCansplitArray([]int{1, 3, 3, 4, 3}))
 	fmt.Println(isPaliandrome(123))
 	array()
+
 	//slice()
 	//make_slice()
 	//matric()
